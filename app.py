@@ -56,7 +56,6 @@ def find_similar_books(preference_data, top_n=1):
     similar_books = df_filtered.iloc[similar_indices][['Title']].to_dict(orient='records')
     return similar_books[0]  # 가장 유사한 책 한 권만 반환
 
-
 # 사용자 선호도를 추천하는 api
 @app.route('/recommend', methods=['POST'])
 def recommend():
@@ -93,4 +92,4 @@ def get_content_by_title():
 
 
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(host="0.0.0.0", port=5001, debug=True) 
