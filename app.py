@@ -1,9 +1,11 @@
-from flask import Flask, request, Response
+from flask import Flask, request, Response, jsonify
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import json
 import requests
+import torch
+from transformers import BertTokenizer, BertForSequenceClassification
 #from flask_sqlalchemy import SQLAlchemy
 #import jaydebeapi
 
@@ -41,12 +43,22 @@ def calculate_weights(interested_books):
     return weights / weights.sum()
 
 def find_similar_books(preference_data, top_n=1):
+    """
+    사용자 선호도 기반으로 책을 추천하는 함수
+    Args:
+        preference_data: 사용자 선호도 데이터프레임
+        top_n: 추천할 책의 수
+    Returns:
+        top_n=1인 경우: 단일 책 제목
+        top_n>1인 경우: 책 제목 리스트
+    """
     # 관심 있는 책 필터링
     LIKE_REACTION = "좋아요"
     interested_books = preference_data[preference_data['userReaction'] == LIKE_REACTION]
     
     if interested_books.empty:
-        return df.sample(n=1)['Title'].iloc[0]
+        result = df.sample(n=top_n)['Title']
+        return result.iloc[0] if top_n == 1 else result.tolist()
     
     embeddings = df[df['Title'].isin(interested_books['title'])]['embedding'].tolist()
     if not embeddings:
@@ -59,8 +71,10 @@ def find_similar_books(preference_data, top_n=1):
     similarities = cosine_similarity([weighted_embeddings], list(df_filtered['embedding']))
     similar_idx = similarities.argsort()[0][-top_n:][::-1]
     
-    return df_filtered.iloc[similar_idx]['Title'].iloc[0]
+    result = df_filtered.iloc[similar_idx]['Title']
+    return result.iloc[0] if top_n == 1 else result.tolist()
 
+# 가입시 선호도 기반으로 책 한권 추천
 @app.route('/recommend', methods=['POST'])
 def recommend():
     # request로 사용자 선호도 받기
@@ -73,8 +87,23 @@ def recommend():
 
     # 책추천 받기
     try:
-        recommendation = find_similar_books(user_preferences)
+        recommendation = find_similar_books(user_preferences, top_n=1)
         return Response(json.dumps(recommendation, ensure_ascii=False), status=200, mimetype='application/json') 
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}, ensure_ascii=False), status=500, mimetype='application/json')
+
+# 마이페이지에서 책 여러권 추천
+@app.route('/recommend/multiple', methods=['POST'])
+def recommend_multiple():
+    data = request.get_json()
+    if not data:
+        return Response(json.dumps({"error": "No data provided"}, ensure_ascii=False), status=400, mimetype='application/json')
+    
+    user_preferences = get_preferences_from_spring(data) 
+
+    try:
+        recommendations = find_similar_books(user_preferences, top_n=30)
+        return Response(json.dumps(recommendations, ensure_ascii=False), status=200, mimetype='application/json') 
     except Exception as e:
         return Response(json.dumps({"error": str(e)}, ensure_ascii=False), status=500, mimetype='application/json')
 
@@ -119,6 +148,36 @@ def get_image_by_title():
             status=400,
             mimetype='application/json'
         )
+
+########################################################################################
+
+model_path = 'path/to/kobert_model'
+tokenizer = BertTokenizer.from_pretrained(model_path)
+kobert_model = BertForSequenceClassification.from_pretrained(model_path)
+
+def predict_sentiment(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    outputs = kobert_model(**inputs)
+    _, predicted_class = torch.max(outputs.logits, dim=1)
+    sentiment = "positive" if predicted_class.item() == 1 else "negative"  # Adjust according to your label mapping
+    return sentiment
+
+@app.route('/predict_sentiment', methods=['POST'])
+def predict_sentiment_route():
+    data = request.get_json()
+    text = data.get('text', '')
+    if not text:
+        return Response(json.dumps({"error": "No text provided"}, ensure_ascii=False), status=400, mimetype='application/json')
+    
+    sentiment = predict_sentiment(text)
+    result = {
+        "predict result": sentiment
+    }
+    return jsonify(result), 200
+
+
+
+
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5001, debug=True) 
