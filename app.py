@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import json
+import requests
 
 app = Flask(__name__)
 
@@ -86,6 +87,31 @@ def get_content_by_title():
             return Response(json.dumps({"error": "해당 title에 대한 content가 없습니다."}, ensure_ascii=False), status=404, mimetype='application/json')
     else:
         return Response(json.dumps({"error": "title 파라미터가 필요합니다."}, ensure_ascii=False), 400, mimetype='application/json')
+
+@app.route('/book/image', methods=['POST'])
+def get_image_by_title():
+    data = request.json  
+    title = data.get('title')
+
+    if title:
+        row = df[df['Title'] == title]
+        if not row.empty:
+            image_url = row.iloc[0]['Cover_URL']
+            print(image_url)
+
+            try:
+                response = requests.get(image_url)
+                if response.status_code != 200:
+                    return Response(json.dumps({"failed to retrieve image"}, ensure_ascii=False))
+                return Response(response.content, content_type=response.headers['Content-Type'])
+            except requests.exceptions.RequestException as e:
+                return f"Error retrieving image: {str(e)}", 500
+
+        else:
+            return Response(json.dumps({"error": "해당 title에 대한 image_url이 없습니다."}, ensure_ascii=False), status=404, mimetype='application/json')
+    else:
+        return Response(json.dumps({"error": "title 파라미터가 필요합니다."}, ensure_ascii=False), 400, mimetype='application/json')
+
 
 
 if __name__ == '__main__':
