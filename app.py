@@ -18,8 +18,8 @@ def get_preferences_from_spring(preference_json):
         df = pd.DataFrame(preferences_data)
 
         # 출력확인
-        print("DataFrame 출력 결과:")
-        print(df)
+        #print("DataFrame 출력 결과:")
+        #print(df)
 
         return df
 
@@ -30,24 +30,32 @@ def get_preferences_from_spring(preference_json):
 # 사용자 선호도와 가장 유사한 책을 반환하는 함수
 def find_similar_books(preference_data, top_n=1):
 
-    # TODO 선호도 데이터로 알고리즘 수정필요 
-    df = preference_data
+    # 관심 있는 책 필터링
+    interested_books = preference_data[preference_data['userReaction'] == 1]
+    
+    # 가중치 계산 (passTime을 가중치로 사용)
+    weights = interested_books['passTime']
+    
+    # 관심 있는 책 제목에 해당하는 임베딩 가져오기
+    embeddings = df[df['Title'].isin(interested_books['title'])]['embedding'].tolist()
+    
+    if not embeddings:
+        raise ValueError("No valid titles found in the dataset.")
+    
+    # 가중치 기반 평균 임베딩 계산
+    weighted_embeddings = np.average(embeddings, axis=0, weights=weights)
+    
+    # 입력된 책을 제외한 유사도 계산
+    df_filtered = df[~df['Title'].isin(interested_books['title'])]
+    similarities_filtered = cosine_similarity([weighted_embeddings], list(df_filtered['embedding']))
+    
+    # 유사도에 따라 책 정렬
+    similar_indices = similarities_filtered.argsort()[0][-top_n:][::-1]
+    
+    # 유사한 책 정보 반환
+    similar_books = df_filtered.iloc[similar_indices][['Title']].to_dict(orient='records')
+    return similar_books[0]  # 가장 유사한 책 한 권만 반환
 
-    # selected_embeddings = df[df['Title'].isin(titles)]['embedding'].tolist()
-    # if not selected_embeddings:
-    #     raise ValueError("No valid titles found in the dataset.")
-    # # 평균 임베딩 계산
-    # average_embedding = np.mean(selected_embeddings, axis=0)
-    # # 입력된 책을 제외한 유사도 계산
-    # df_filtered = df[~df['Title'].isin(titles)]
-    # similarities_filtered = cosine_similarity([average_embedding], list(df_filtered['embedding']))
-    
-    # # 유사도에 따라 책 정렬
-    # similar_indices = similarities_filtered.argsort()[0][-top_n:][::-1]
-    
-    # # 유사한 책 정보 반환
-    # similar_books = df_filtered.iloc[similar_indices][['Title', 'Author', 'Category', 'Cover_URL']].to_dict(orient='records')
-    # return similar_books[0]  # 가장 유사한 책 한 권만 반환
 
 # 사용자 선호도를 추천하는 api
 @app.route('/recommend', methods=['POST'])
@@ -55,7 +63,7 @@ def recommend():
     # request로 사용자 선호도 받기
     data = request.get_json()
     if not data:
-        return jsonify({'error': 'No data provided'}), 400
+        return Response(json.dumps({"error": "No data provided"}, ensure_ascii=False), status=400, mimetype='application/json')
     
     # 사용자 선호도 json -> df로 변환
     user_preferences_data = get_preferences_from_spring(data) 
@@ -63,10 +71,10 @@ def recommend():
     # 책추천 받기
     try:
         similar_book = find_similar_books(user_preferences_data)  
-        return jsonify(similar_book) 
+        return Response(json.dumps(similar_book, ensure_ascii=False), status=200, mimetype='application/json') 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        return Response(json.dumps({"error": str(e)}, ensure_ascii=False), status=500, mimetype='application/json')
+    
 # 책 제목에 해당하는 책구절(content)반환
 @app.route('/book/content', methods=['POST'])
 def get_content_by_title():
