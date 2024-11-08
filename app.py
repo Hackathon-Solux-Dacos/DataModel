@@ -4,8 +4,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import json
 import requests
-import torch
-from transformers import BertTokenizer, BertForSequenceClassification
+
 #from flask_sqlalchemy import SQLAlchemy
 #import jaydebeapi
 
@@ -61,8 +60,8 @@ def find_similar_books(preference_data, top_n=1):
     
     # 유효한 책이 없는 경우 랜덤 추천
     if valid_books.empty:
-        result = df.sample(n=top_n)['Title']
-        return result.iloc[0] if top_n == 1 else result.tolist()
+        result = df.sample(n=top_n)[['Title', 'Cover_URL']]
+        return result.iloc[0]['Title'] if top_n == 1 else [{"title": row['Title'], "url": row['Cover_URL']} for _, row in result.iterrows()]
     
     embeddings = df[df['Title'].isin(valid_books['title'])]['embedding'].tolist()
     weights = calculate_weights(valid_books)
@@ -72,8 +71,8 @@ def find_similar_books(preference_data, top_n=1):
     similarities = cosine_similarity([weighted_embeddings], list(df_filtered['embedding']))
     similar_idx = similarities.argsort()[0][-top_n:][::-1]
     
-    result = df_filtered.iloc[similar_idx]['Title']
-    return result.iloc[0] if top_n == 1 else result.tolist()
+    result = df_filtered.iloc[similar_idx][['Title', 'Cover_URL']]
+    return result.iloc[0]['Title'] if top_n == 1 else [{"title": row['Title'], "url": row['Cover_URL']} for _, row in result.iterrows()]
 
 # 가입시 선호도 기반으로 책 한권 추천
 @app.route('/recommend', methods=['POST'])
@@ -151,32 +150,6 @@ def get_image_by_title():
         )
 
 ########################################################################################
-
-model_path = 'path/to/model'
-tokenizer = BertTokenizer.from_pretrained(model_path)
-kobert_model = BertForSequenceClassification.from_pretrained(model_path)
-
-def predict_sentiment(text):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    outputs = kobert_model(**inputs)
-    _, predicted_class = torch.max(outputs.logits, dim=1)
-    sentiment = "positive" if predicted_class.item() == 1 else "negative"  # Adjust according to your label mapping
-    return sentiment
-
-@app.route('/predict_sentiment', methods=['POST'])
-def predict_sentiment_route():
-    data = request.get_json()
-    text = data.get('text', '')
-    if not text:
-        return Response(json.dumps({"error": "No text provided"}, ensure_ascii=False), status=400, mimetype='application/json')
-    
-    sentiment = predict_sentiment(text)
-    result = {
-        "predict result": sentiment
-    }
-    return jsonify(result), 200
-
-
 
 
 
