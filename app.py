@@ -56,18 +56,19 @@ def find_similar_books(preference_data, top_n=1):
     LIKE_REACTION = "좋아요"
     interested_books = preference_data[preference_data['userReaction'] == LIKE_REACTION]
     
-    if interested_books.empty:
+    # 임베딩 데이터셋에 존재하는 책만 필터링
+    valid_books = interested_books[interested_books['title'].isin(df['Title'])]
+    
+    # 유효한 책이 없는 경우 랜덤 추천
+    if valid_books.empty:
         result = df.sample(n=top_n)['Title']
         return result.iloc[0] if top_n == 1 else result.tolist()
     
-    embeddings = df[df['Title'].isin(interested_books['title'])]['embedding'].tolist()
-    if not embeddings:
-        raise ValueError("No valid titles found in the dataset.")
-    
-    weights = calculate_weights(interested_books)
+    embeddings = df[df['Title'].isin(valid_books['title'])]['embedding'].tolist()
+    weights = calculate_weights(valid_books)
     weighted_embeddings = np.average(embeddings, axis=0, weights=weights)
     
-    df_filtered = df[~df['Title'].isin(interested_books['title'])]
+    df_filtered = df[~df['Title'].isin(valid_books['title'])]
     similarities = cosine_similarity([weighted_embeddings], list(df_filtered['embedding']))
     similar_idx = similarities.argsort()[0][-top_n:][::-1]
     
@@ -151,7 +152,7 @@ def get_image_by_title():
 
 ########################################################################################
 
-model_path = 'path/to/kobert_model'
+model_path = 'path/to/model'
 tokenizer = BertTokenizer.from_pretrained(model_path)
 kobert_model = BertForSequenceClassification.from_pretrained(model_path)
 
