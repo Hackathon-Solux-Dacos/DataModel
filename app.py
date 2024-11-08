@@ -4,8 +4,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import json
 import requests
+#from flask_sqlalchemy import SQLAlchemy
+#import jaydebeapi
 
 app = Flask(__name__)
+
+#db_path = "testDBBB.mv.db"  # H2 데이터베이스 파일 경로
+#h2_jar_path = "h2-2.3.232.jar" 
 
 # 데이터 로드 및 임베딩 변환
 df = pd.read_csv('book_data_embeddings.csv', encoding='utf-8-sig')
@@ -97,22 +102,23 @@ def get_image_by_title():
         row = df[df['Title'] == title]
         if not row.empty:
             image_url = row.iloc[0]['Cover_URL']
-            print(image_url)
-
-            try:
-                response = requests.get(image_url)
-                if response.status_code != 200:
-                    return Response(json.dumps({"failed to retrieve image"}, ensure_ascii=False))
-                return Response(response.content, content_type=response.headers['Content-Type'])
-            except requests.exceptions.RequestException as e:
-                return f"Error retrieving image: {str(e)}", 500
-
+            return Response(
+                json.dumps({"cover_url": image_url}, ensure_ascii=False),
+                status=200,
+                mimetype='application/json'
+            )
         else:
-            return Response(json.dumps({"error": "해당 title에 대한 image_url이 없습니다."}, ensure_ascii=False), status=404, mimetype='application/json')
+            return Response(
+                json.dumps({"error": "해당 title에 대한 cover_url이 없습니다."}, ensure_ascii=False),
+                status=404,
+                mimetype='application/json'
+            )
     else:
-        return Response(json.dumps({"error": "title 파라미터가 필요합니다."}, ensure_ascii=False), 400, mimetype='application/json')
-
-
+        return Response(
+            json.dumps({"error": "title 파라미터가 필요합니다."}, ensure_ascii=False),
+            status=400,
+            mimetype='application/json'
+        )
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5001, debug=True) 
