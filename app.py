@@ -4,6 +4,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import json
 import requests
+import torch
+from transformers import AutoTokenizer, AutoModel
+from tensorflow.keras.models import load_model  # 상단에 import 추가
 
 #from flask_sqlalchemy import SQLAlchemy
 #import jaydebeapi
@@ -55,24 +58,28 @@ def find_similar_books(preference_data, top_n=1):
     LIKE_REACTION = "좋아요"
     interested_books = preference_data[preference_data['userReaction'] == LIKE_REACTION]
     
-    # 임베딩 데이터셋에 존재하는 책만 필터링
+    if interested_books.empty:
+        result = df.sample(n=top_n)['Title']
+        return result.iloc[0] if top_n == 1 else result.tolist()
+    
+    # 데이터셋에 존재하는 책 제목만 필터링
     valid_books = interested_books[interested_books['title'].isin(df['Title'])]
     
-    # 유효한 책이 없는 경우 랜덤 추천
+    # 유효한 제목이 없는 경우 랜덤 추천
     if valid_books.empty:
-        result = df.sample(n=top_n)[['Title', 'Cover_URL']]
-        return result.iloc[0]['Title'] if top_n == 1 else [{"title": row['Title'], "url": row['Cover_URL']} for _, row in result.iterrows()]
+        result = df.sample(n=top_n)['Title']
+        return result.iloc[0] if top_n == 1 else result.tolist()
     
     embeddings = df[df['Title'].isin(valid_books['title'])]['embedding'].tolist()
-    weights = calculate_weights(valid_books)
+    weights = calculate_weights(valid_books)  # valid_books로 가중치 계산
     weighted_embeddings = np.average(embeddings, axis=0, weights=weights)
     
     df_filtered = df[~df['Title'].isin(valid_books['title'])]
     similarities = cosine_similarity([weighted_embeddings], list(df_filtered['embedding']))
     similar_idx = similarities.argsort()[0][-top_n:][::-1]
     
-    result = df_filtered.iloc[similar_idx][['Title', 'Cover_URL']]
-    return result.iloc[0]['Title'] if top_n == 1 else [{"title": row['Title'], "url": row['Cover_URL']} for _, row in result.iterrows()]
+    result = df_filtered.iloc[similar_idx]['Title']
+    return result.iloc[0] if top_n == 1 else result.tolist()
 
 # 가입시 선호도 기반으로 책 한권 추천
 @app.route('/recommend', methods=['POST'])
@@ -151,7 +158,81 @@ def get_image_by_title():
 
 ########################################################################################
 
+# # model_path = 'path/to/model'
+# model_path = 'skt/kobert-base-v1'
+# tokenizer = AutoTokenizer.from_pretrained(model_path)
+# model = AutoModel.from_pretrained(model_path)
 
+# 전역 변수로 모델과 토크나이저 선언
+tokenizer = None
+sentiment_model = None 
+
+def load_sentiment_model():
+    global tokenizer, sentiment_model
+    try:
+        # 토크나이저 로드
+        tokenizer = AutoTokenizer.from_pretrained('monologg/kobert')
+        
+        # 모델 로드 - 상대 경로 사용
+        sentiment_model = load_model('sentiment_model')
+        
+        print("Model loaded successfully")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+
+def predict_sentiment(text):
+    # 텍스트를 모델 입력 형식으로 변환
+    tokens = tokenizer.encode(text, max_length=64, truncation=True, padding='max_length')
+    
+    # 마스크 생성
+    num_zeros = tokens.count(0)
+    mask = [1]*(64-num_zeros) + [0]*num_zeros
+    
+    # 세그먼트 생성 
+    segment = [0]*64
+    
+    # 입력 데이터 준비
+    tokens = np.array([tokens])
+    masks = np.array([mask]) 
+    segments = np.array([segment])
+
+    # 예측
+    prediction = sentiment_model.predict([tokens, masks, segments])
+    probability = float(prediction[0][0])  # 확률값 추출
+    
+    # 확률이 0.5 이상이면 좋아요, 미만이면 싫어요
+    sentiment = "좋아요" if probability >= 0.5 else "싫어요"
+    
+    return {
+        "reaction": sentiment,
+        "probability": probability
+    }
+
+@app.route('/predict_sentiment', methods=['POST'])
+def predict_sentiment_route():
+    data = request.get_json()
+    text = data.get('text', '')
+    
+    if not text:
+        return Response(
+            json.dumps({"error": "No text provided"}, ensure_ascii=False), 
+            status=400, 
+            mimetype='application/json'
+        )
+    
+    try:
+        result = predict_sentiment(text)
+        return Response(
+            json.dumps(result, ensure_ascii=False),
+            status=200,
+            mimetype='application/json'
+        )
+    except Exception as e:
+        return Response(
+            json.dumps({"error": str(e)}, ensure_ascii=False),
+            status=500,
+            mimetype='application/json'
+        )
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5001, debug=True) 
