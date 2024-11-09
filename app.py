@@ -5,16 +5,13 @@ import numpy as np
 import json
 import requests
 import torch
-from transformers import AutoTokenizer, AutoModel
-from tensorflow.keras.models import load_model  # 상단에 import 추가
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 #from flask_sqlalchemy import SQLAlchemy
 #import jaydebeapi
 
 app = Flask(__name__)
 
-#db_path = "testDBBB.mv.db"  # H2 데이터베이스 파일 경로
-#h2_jar_path = "h2-2.3.232.jar" 
 
 # 데이터 로드 및 임베딩 변환
 df = pd.read_csv('book_data_embeddings.csv', encoding='utf-8-sig')
@@ -22,12 +19,9 @@ df['embedding'] = df['embedding'].apply(eval)
 
 def get_preferences_from_spring(preference_json):
     try:
-        df = pd.DataFrame(preference_json)
-        # 출력확인
-        # print("DataFrame 출력 결과:", df)
-        return df
+        return pd.DataFrame(preference_json)
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error in preference conversion: {e}")
         return pd.DataFrame()
 
 def calculate_weights(interested_books):
@@ -45,15 +39,7 @@ def calculate_weights(interested_books):
     return weights / weights.sum()
 
 def find_similar_books(preference_data, top_n=1):
-    """
-    사용자 선호도 기반으로 책을 추천하는 함수
-    Args:
-        preference_data: 사용자 선호도 데이터프레임
-        top_n: 추천할 책의 수
-    Returns:
-        top_n=1인 경우: 단일 책 제목
-        top_n>1인 경우: 책 제목 리스트
-    """
+
     # 관심 있는 책 필터링
     LIKE_REACTION = "좋아요"
     interested_books = preference_data[preference_data['userReaction'] == LIKE_REACTION]
@@ -157,77 +143,66 @@ def get_image_by_title():
         )
 
 ########################################################################################
+# model_path = 'monologg/kobert'
 
-# # model_path = 'path/to/model'
-# model_path = 'skt/kobert-base-v1'
-# tokenizer = AutoTokenizer.from_pretrained(model_path)
-# model = AutoModel.from_pretrained(model_path)
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-# 전역 변수로 모델과 토크나이저 선언
-tokenizer = None
-sentiment_model = None 
-
-def load_sentiment_model():
-    global tokenizer, sentiment_model
-    try:
-        # 토크나이저 로드
-        tokenizer = AutoTokenizer.from_pretrained('monologg/kobert')
-        
-        # 모델 로드 - 상대 경로 사용
-        sentiment_model = load_model('sentiment_model')
-        
-        print("Model loaded successfully")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-
+tokenizer = AutoTokenizer.from_pretrained("sepidmnorozy/sentiment-5Epochs")
+model = AutoModelForSequenceClassification.from_pretrained("sepidmnorozy/sentiment-5Epochs")
 def predict_sentiment(text):
-    # 텍스트를 모델 입력 형식으로 변환
-    tokens = tokenizer.encode(text, max_length=64, truncation=True, padding='max_length')
+    # 입력 텍스트 전처리
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=256,
+        padding=True
+    )
     
-    # 마스크 생성
-    num_zeros = tokens.count(0)
-    mask = [1]*(64-num_zeros) + [0]*num_zeros
-    
-    # 세그먼트 생성 
-    segment = [0]*64
-    
-    # 입력 데이터 준비
-    tokens = np.array([tokens])
-    masks = np.array([mask]) 
-    segments = np.array([segment])
-
-    # 예측
-    prediction = sentiment_model.predict([tokens, masks, segments])
-    probability = float(prediction[0][0])  # 확률값 추출
-    
-    # 확률이 0.5 이상이면 좋아요, 미만이면 싫어요
-    sentiment = "좋아요" if probability >= 0.5 else "싫어요"
-    
-    return {
-        "reaction": sentiment,
-        "probability": probability
-    }
+    # 예측 수행
+    with torch.no_grad():
+        outputs = model(**inputs)
+        probabilities = torch.nn.functional.softmax(outputs.logits, dim=1)
+        predicted_class = torch.argmax(probabilities, dim=1)
+        label = "POSITIVE" if predicted_class.item() == 1 else "NEGATIVE"
+        sentiment = "좋아요" if label == "POSITIVE" else "싫어요"
+    return sentiment
 
 @app.route('/predict_sentiment', methods=['POST'])
 def predict_sentiment_route():
-    data = request.get_json()
-    text = data.get('text', '')
-    
-    if not text:
-        return Response(
-            json.dumps({"error": "No text provided"}, ensure_ascii=False), 
-            status=400, 
-            mimetype='application/json'
-        )
-    
     try:
-        result = predict_sentiment(text)
+        if request.is_json:
+            data = request.get_json()
+        else:
+            try:
+                data = json.loads(request.get_data(as_text=True))
+            except json.JSONDecodeError:
+                return Response(
+                    json.dumps({"error": "Invalid JSON format"}, ensure_ascii=False),
+                    status=400,
+                    mimetype='application/json'
+                )
+
+        text = data.get('text', '')
+        if not text:
+            return Response(
+                json.dumps({"error": "No text provided"}, ensure_ascii=False),
+                status=400,
+                mimetype='application/json'
+            )
+        
+        sentiment = predict_sentiment(text)
+        result = {
+            "predict result": sentiment
+        }
         return Response(
             json.dumps(result, ensure_ascii=False),
             status=200,
             mimetype='application/json'
         )
+        
     except Exception as e:
+        print(f"Error in sentiment analysis: {e}")
         return Response(
             json.dumps({"error": str(e)}, ensure_ascii=False),
             status=500,
@@ -235,4 +210,4 @@ def predict_sentiment_route():
         )
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5001, debug=True) 
+    app.run(host="0.0.0.0", port=5000, debug=True) 
